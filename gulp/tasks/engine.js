@@ -1,18 +1,18 @@
 /****************************************************************************
  Copyright (c) 2013-2016 Chukong Technologies Inc.
 
- http://www.cocos.com
+ https://www.cocos.com/
 
  Permission is hereby granted, free of charge, to any person obtaining a copy
  of this software and associated engine source code (the "Software"), a limited,
- worldwide, royalty-free, non-assignable, revocable and  non-exclusive license
+ worldwide, royalty-free, non-assignable, revocable and non-exclusive license
  to use Cocos Creator solely to develop games on your target platforms. You shall
  not use Cocos Creator software for developing other software or tools that's
  used for developing games. You are not granted to publish, distribute,
  sublicense, and/or sell copies of Cocos Creator.
 
  The software or tools in this License Agreement are licensed, not sold.
- Chukong Aipu reserves all rights not expressly granted to you.
+ Xiamen Yaji Software Co., Ltd. reserves all rights not expressly granted to you.
 
  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -28,57 +28,95 @@
 const Utils = require('../util/utils');
 const createBundler = require('../util/create-bundler');
 const Path = require('path');
+const Fs = require('fs-extra');
 
 const Source = require('vinyl-source-stream');
 const Gulp = require('gulp');
 const Buffer = require('vinyl-buffer');
-const Composer = require('gulp-uglify/composer');
-const Uglify = require('uglify-es');
-const Minify = Composer(Uglify, console);
 const Sourcemaps = require('gulp-sourcemaps');
 const EventStream = require('event-stream');
 const Chalk = require('chalk');
 const HandleErrors = require('../util/handleErrors');
 const Optimizejs = require('gulp-optimize-js');
 
-exports.buildCocosJs = function (sourceFile, outputFile, excludes, callback) {
+var jsbSkipModules = [
+    // modules need to skip in jsb
+    '../../extensions/spine/lib/spine.js',
+    '../../extensions/dragonbones/lib/dragonBones.js',
+    '../../extensions/dragonbones/CCArmatureDisplay.js',
+    '../../extensions/dragonbones/CCFactory.js',
+    '../../extensions/dragonbones/CCSlot.js',
+    '../../extensions/dragonbones/CCTextureData.js'
+];
+var jsbAliasify = {
+    replacements: {
+        // '(.*)render-engine(.js)?': require.resolve('../../cocos2d/core/renderer/render-engine.jsb')
+    },
+    verbose: false
+};
+
+exports.buildDebugInfos = require('./buildDebugInfos');
+
+exports.buildCocosJs = function (sourceFile, outputFile, excludes, opt_macroFlags, callback, createMap) {
+    if (typeof opt_macroFlags === 'function') {
+        callback = opt_macroFlags;
+        opt_macroFlags = null;
+    }
+
+    var opts = {
+        sourcemaps: createMap !== false
+    };
     var outDir = Path.dirname(outputFile);
     var outFile = Path.basename(outputFile);
-    var bundler = createBundler(sourceFile);
+    var bundler = createBundler(sourceFile, opts);
 
     excludes && excludes.forEach(function (file) {
-        bundler.ignore(file);
+        bundler.exclude(file);
     });
-
-    var uglifyOption = Utils.getUglifyOptions('build', false, true);
 
     bundler = bundler.bundle();
     bundler = bundler.pipe(Source(outFile));
     bundler = bundler.pipe(Buffer());
-    bundler = bundler.pipe(Sourcemaps.init({loadMaps: true}));
-    bundler = bundler.pipe(Minify(uglifyOption));
+
+    if (createMap) {
+        bundler = bundler.pipe(Sourcemaps.init({loadMaps: true}));
+    }
+
+    bundler = bundler.pipe(Utils.uglify('build', Object.assign({ debug: true }, opt_macroFlags)));
     bundler = bundler.pipe(Optimizejs({
         sourceMap: false
     }));
-    bundler = bundler.pipe(Sourcemaps.write('./', {
-        sourceRoot: './',
-        includeContent: true,
-        addComment: true
-    }));
+
+    if (createMap) {
+        bundler = bundler.pipe(Sourcemaps.write('./', {
+            sourceRoot: './',
+            includeContent: true,
+            addComment: true
+        }));
+    }
+
     bundler = bundler.pipe(Gulp.dest(outDir));
     return bundler.on('end', callback);
 };
 
-exports.buildCocosJsMin = function (sourceFile, outputFile, excludes, callback, createMap) {
+exports.buildCocosJsMin = function (sourceFile, outputFile, excludes, opt_macroFlags, callback, createMap) {
+    if (typeof opt_macroFlags === 'function') {
+        callback = opt_macroFlags;
+        opt_macroFlags = null;
+    }
+
+    var opts = {
+        sourcemaps: createMap !== false
+    };
     var outDir = Path.dirname(outputFile);
     var outFile = Path.basename(outputFile);
-    var bundler = createBundler(sourceFile);
+    var bundler = createBundler(sourceFile, opts);
 
     excludes && excludes.forEach(function (file) {
-        bundler.ignore(file);
+        bundler.exclude(file);
     });
 
-    var uglifyOption = Utils.getUglifyOptions('build', false, false);
+    bundler.exclude(Path.resolve(__dirname, '../../DebugInfos.json'));
 
     var Size = null;
     try {
@@ -99,7 +137,7 @@ exports.buildCocosJsMin = function (sourceFile, outputFile, excludes, callback, 
         console.error('Can not use sourcemap with optimize-js');
         bundler = bundler.pipe(Sourcemaps.init({loadMaps: true}));
     }
-    bundler = bundler.pipe(Minify(uglifyOption));
+    bundler = bundler.pipe(Utils.uglify('build', opt_macroFlags));
     bundler = bundler.pipe(Optimizejs({
         sourceMap: false
     }));
@@ -126,60 +164,50 @@ exports.buildCocosJsMin = function (sourceFile, outputFile, excludes, callback, 
     return bundler.on('end', callback);
 };
 
-exports.buildPreview = function (sourceFile, outputFile, callback) {
+exports.buildPreview = function (sourceFile, outputFile, callback, devMode) {
+    var cacheDir = devMode && Path.resolve(Path.dirname(outputFile), '.cache/preview-compile-cache');
     var outFile = Path.basename(outputFile);
     var outDir = Path.dirname(outputFile);
 
-    var bundler = createBundler(sourceFile);
-    bundler.bundle()
-        .on('error', HandleErrors.handler)
-        .pipe(HandleErrors())
-        .pipe(Source(outFile))
-        .pipe(Buffer())
-        .pipe(Sourcemaps.init({loadMaps: true}))
-        .pipe(Minify(Utils.getUglifyOptions('preview', false, false)))
-        .pipe(Optimizejs({
-            sourceMap: false
-        }))
-        .pipe(Sourcemaps.write('./', {
-            sourceRoot: '../',
-            includeContent: false,
-            addComment: true
-        }))
-        .pipe(Gulp.dest(outDir))
-        .on('end', callback);
-};
-
-exports.buildJsbPreview = function (sourceFile, outputFile, jsbSkipModules, callback) {
-    var outFile = Path.basename(outputFile);
-    var outDir = Path.dirname(outputFile);
-
-    var bundler = createBundler(sourceFile);
-    jsbSkipModules.forEach(function (module) {
-        bundler.ignore(require.resolve(module));
+    var bundler = createBundler(sourceFile, {
+        cacheDir: cacheDir,
+        sourcemaps: !devMode
     });
-    bundler.bundle()
+    var bundler = bundler
+        .bundle()
         .on('error', HandleErrors.handler)
         .pipe(HandleErrors())
         .pipe(Source(outFile))
-        .pipe(Buffer())
-        .pipe(Minify(Utils.getUglifyOptions('preview', true, false)))
-        .pipe(Optimizejs({
-            sourceMap: false
-        }))
+        .pipe(Buffer());
+    if (!devMode) {
+        bundler = bundler
+            .pipe(Sourcemaps.init({loadMaps: true}))
+            .pipe(Utils.uglify('preview'))
+            .pipe(Optimizejs({
+                sourceMap: false
+            }))
+            .pipe(Sourcemaps.write('./', {
+                sourceRoot: '../',
+                includeContent: false,
+                addComment: true
+            }));
+    }
+    bundler
         .pipe(Gulp.dest(outDir))
         .on('end', callback);
 };
 
-exports.buildJsb = function (sourceFile, outputFile, jsbSkipModules, callback) {
+exports.buildJsbPreview = function (sourceFile, outputFile, excludes, callback) {
     var FixJavaScriptCore = require('../util/fix-jsb-javascriptcore');
 
     var outFile = Path.basename(outputFile);
     var outDir = Path.dirname(outputFile);
 
+    excludes = excludes.concat(jsbSkipModules);
+
     var bundler = createBundler(sourceFile);
-    jsbSkipModules.forEach(function (module) {
-        bundler.ignore(require.resolve(module));
+    excludes.forEach(function (module) {
+        bundler.exclude(require.resolve(module));
     });
     bundler.bundle()
         .on('error', HandleErrors.handler)
@@ -187,7 +215,7 @@ exports.buildJsb = function (sourceFile, outputFile, jsbSkipModules, callback) {
         .pipe(Source(outFile))
         .pipe(Buffer())
         .pipe(FixJavaScriptCore())
-        .pipe(Minify(Utils.getUglifyOptions('build', true, true)))
+        .pipe(Utils.uglify('preview', { jsb: true }))
         .pipe(Optimizejs({
             sourceMap: false
         }))
@@ -195,15 +223,28 @@ exports.buildJsb = function (sourceFile, outputFile, jsbSkipModules, callback) {
         .on('end', callback);
 };
 
-exports.buildJsbMin = function (sourceFile, outputFile, jsbSkipModules, callback) {
+exports.buildJsb = function (sourceFile, outputFile, excludes, opt_macroFlags, callback, createMap) {
+    if (typeof opt_macroFlags === 'function') {
+        callback = opt_macroFlags;
+        opt_macroFlags = null;
+    }
+
+    var opts = {
+        sourcemaps: createMap !== false
+    };
+    if (opt_macroFlags && opt_macroFlags.nativeRenderer) {
+        opts.aliasifyConfig = jsbAliasify;
+    }
+
     var FixJavaScriptCore = require('../util/fix-jsb-javascriptcore');
 
     var outFile = Path.basename(outputFile);
     var outDir = Path.dirname(outputFile);
 
-    var bundler = createBundler(sourceFile);
-    jsbSkipModules.forEach(function (module) {
-        bundler.ignore(require.resolve(module));
+    var bundler = createBundler(sourceFile, opts);
+    excludes = excludes.concat(jsbSkipModules);
+    excludes.forEach(function (module) {
+        bundler.exclude(require.resolve(module));
     });
     bundler.bundle()
         .on('error', HandleErrors.handler)
@@ -211,10 +252,172 @@ exports.buildJsbMin = function (sourceFile, outputFile, jsbSkipModules, callback
         .pipe(Source(outFile))
         .pipe(Buffer())
         .pipe(FixJavaScriptCore())
-        .pipe(Minify(Utils.getUglifyOptions('build', true, false)))
+        .pipe(Utils.uglify('build', Object.assign({ jsb: true, debug: true }, opt_macroFlags)))
         .pipe(Optimizejs({
             sourceMap: false
         }))
         .pipe(Gulp.dest(outDir))
         .on('end', callback);
 };
+
+exports.buildJsbMin = function (sourceFile, outputFile, excludes, opt_macroFlags, callback, createMap) {
+    if (typeof opt_macroFlags === 'function') {
+        callback = opt_macroFlags;
+        opt_macroFlags = null;
+    }
+
+    var opts = {
+        sourcemaps: createMap !== false
+    };
+    if (opt_macroFlags && opt_macroFlags.nativeRenderer) {
+        opts.aliasifyConfig = jsbAliasify;
+    }
+    
+    var FixJavaScriptCore = require('../util/fix-jsb-javascriptcore');
+
+    var outFile = Path.basename(outputFile);
+    var outDir = Path.dirname(outputFile);
+
+    var bundler = createBundler(sourceFile, opts);
+    excludes = excludes.concat(jsbSkipModules);
+    excludes.forEach(function (module) {
+        bundler.exclude(require.resolve(module));
+    });
+
+    bundler.exclude(Path.resolve(__dirname, '../../DebugInfos.json'));
+
+    bundler.bundle()
+        .on('error', HandleErrors.handler)
+        .pipe(HandleErrors())
+        .pipe(Source(outFile))
+        .pipe(Buffer())
+        .pipe(FixJavaScriptCore())
+        .pipe(Utils.uglify('build', Object.assign({ jsb: true }, opt_macroFlags)))
+        .pipe(Optimizejs({
+            sourceMap: false
+        }))
+        .pipe(Gulp.dest(outDir))
+        .on('end', callback);
+};
+
+exports.buildRuntime = function (sourceFile, outputFile, excludes, opt_macroFlags, callback, createMap) {
+    if (typeof opt_macroFlags === 'function') {
+        callback = opt_macroFlags;
+        opt_macroFlags = null;
+    }
+
+    var opts = {
+        sourcemaps: createMap !== false
+    };
+    if (opt_macroFlags && opt_macroFlags.nativeRenderer) {
+        opts.aliasifyConfig = jsbAliasify;
+    }
+
+    var FixJavaScriptCore = require('../util/fix-jsb-javascriptcore');
+
+    var outFile = Path.basename(outputFile);
+    var outDir = Path.dirname(outputFile);
+
+    var bundler = createBundler(sourceFile, opts);
+    excludes.forEach(function (module) {
+        bundler.exclude(require.resolve(module));
+    });
+    bundler.bundle()
+        .on('error', HandleErrors.handler)
+        .pipe(HandleErrors())
+        .pipe(Source(outFile))
+        .pipe(Buffer())
+        .pipe(FixJavaScriptCore())
+        .pipe(Utils.uglify('build', Object.assign({ jsb: false, runtime: true, debug: true }, opt_macroFlags)))
+        .pipe(Optimizejs({
+            sourceMap: false
+        }))
+        .pipe(Gulp.dest(outDir))
+        .on('end', callback);
+};
+
+exports.buildRuntimeMin = function (sourceFile, outputFile, excludes, opt_macroFlags, callback, createMap) {
+    if (typeof opt_macroFlags === 'function') {
+        callback = opt_macroFlags;
+        opt_macroFlags = null;
+    }
+
+    var opts = {
+        sourcemaps: createMap !== false
+    };
+    if (opt_macroFlags && opt_macroFlags.nativeRenderer) {
+        opts.aliasifyConfig = jsbAliasify;
+    }
+    
+    var FixJavaScriptCore = require('../util/fix-jsb-javascriptcore');
+
+    var outFile = Path.basename(outputFile);
+    var outDir = Path.dirname(outputFile);
+
+    var bundler = createBundler(sourceFile, opts);
+    excludes.forEach(function (module) {
+        bundler.exclude(require.resolve(module));
+    });
+
+    bundler.exclude(Path.resolve(__dirname, '../../DebugInfos.json'));
+
+    bundler.bundle()
+        .on('error', HandleErrors.handler)
+        .pipe(HandleErrors())
+        .pipe(Source(outFile))
+        .pipe(Buffer())
+        .pipe(FixJavaScriptCore())
+        .pipe(Utils.uglify('build', Object.assign({ jsb: false, runtime: true }, opt_macroFlags)))
+        .pipe(Optimizejs({
+            sourceMap: false
+        }))
+        .pipe(Gulp.dest(outDir))
+        .on('end', callback);
+};
+
+exports.excludeAllDepends = function (excludedModules) {
+    let modules = Fs.readJsonSync(Path.join(__dirname, '../../modules.json'));
+    if (modules && modules.length > 0) {
+        function _excludeMudules (muduleName) {
+            if (excMudules[muduleName]) {
+                return;
+            }
+            for (let module of modules) {
+                if (module.name === muduleName) {
+                    excMudules[muduleName] = module;
+                    break;
+                }
+            }
+
+            modules.forEach(module => {
+                if (module.dependencies && module.dependencies.indexOf(muduleName) !== -1) {
+                    _excludeMudules(module.name);
+                }
+            });
+        }
+
+        // exclude all mudules
+        let excMudules = Object.create(null);
+
+        excludedModules.forEach(_excludeMudules);
+
+        let excludes = [];
+        for (let key in excMudules) {
+            let module = excMudules[key];
+            if (module.entries) {
+                module.entries.forEach(function (file) {
+                    let path = Path.join(__dirname, '..', '..', file);
+                    if (excludes.indexOf(path) === -1) {
+                        excludes.push(path);
+                    }
+                });
+            }
+        }
+        return excludes;
+    }
+    else {
+        return [];
+    }
+};
+
+exports.jsbSkipModules = jsbSkipModules;

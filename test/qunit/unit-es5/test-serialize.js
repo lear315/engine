@@ -2,10 +2,10 @@
 
     largeModule('Serialize');
 
-    var match = function (obj, expect, info) {
+    function match (obj, expect, info) {
         deepEqual(JSON.parse(Editor.serialize(obj)), expect, info);
         //deepEqual(Editor.serialize(obj, {stringify: false}), expect, info);
-    };
+    }
 
     test('basic test', function() {
         match({}, {}, 'smoke test1');
@@ -119,7 +119,7 @@
             __type__: 'MyAsset',
             _name: '',
             _objFlags: 0,
-            _rawFiles: null,
+            _native: "",
             emptyArray: [],
             array: [1, '2',  {a:3}, [4, [5]], true],
             string: 'unknown',
@@ -499,5 +499,33 @@
         strictEqual(actual[2].__type__, "cc.Node", 'checking');
 
         cc.js.unregisterClass(Data);
+    });
+
+    test('formerlySerializedAs attribute', function () {
+        var MyAsset = cc.Class({
+            name: 'MyAsset',
+            properties: {
+                newRefSelf: {
+                    default: null,
+                    formerlySerializedAs: 'oldRefSelf'
+                },
+            }
+        });
+        var asset = new MyAsset();
+        asset.newRefSelf = asset;
+
+        var expect = {
+            __type__: 'MyAsset',
+            newRefSelf: {
+                __id__: 0
+            },
+            oldRefSelf: {
+                __id__: 0
+            },
+        };
+
+        match(asset, expect, 'test');
+
+        cc.js.unregisterClass(MyAsset);
     });
 }

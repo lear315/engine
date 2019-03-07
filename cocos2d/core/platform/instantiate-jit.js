@@ -1,18 +1,19 @@
 /****************************************************************************
  Copyright (c) 2013-2016 Chukong Technologies Inc.
+ Copyright (c) 2017-2018 Xiamen Yaji Software Co., Ltd.
 
- http://www.cocos.com
+ https://www.cocos.com/
 
  Permission is hereby granted, free of charge, to any person obtaining a copy
  of this software and associated engine source code (the "Software"), a limited,
- worldwide, royalty-free, non-assignable, revocable and  non-exclusive license
+  worldwide, royalty-free, non-assignable, revocable and non-exclusive license
  to use Cocos Creator solely to develop games on your target platforms. You shall
- not use Cocos Creator software for developing other software or tools that's
- used for developing games. You are not granted to publish, distribute,
- sublicense, and/or sell copies of Cocos Creator.
+  not use Cocos Creator software for developing other software or tools that's
+  used for developing games. You are not granted to publish, distribute,
+  sublicense, and/or sell copies of Cocos Creator.
 
  The software or tools in this License Agreement are licensed, not sold.
- Chukong Aipu reserves all rights not expressly granted to you.
+ Xiamen Yaji Software Co., Ltd. reserves all rights not expressly granted to you.
 
  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -29,10 +30,10 @@ var CCObject = require('./CCObject');
 var Destroyed = CCObject.Flags.Destroyed;
 var PersistentMask = CCObject.Flags.PersistentMask;
 var Attr = require('./attribute');
-var JS = require('./js');
+var js = require('./js');
 var CCClass = require('./CCClass');
+var Compiler = require('./compiler');
 
-var SERIALIZABLE = Attr.DELIMETER + 'serializable';
 var DEFAULT = Attr.DELIMETER + 'default';
 var IDENTIFIER_RE = CCClass.IDENTIFIER_RE;
 var escapeForJS = CCClass.escapeForJS;
@@ -42,6 +43,17 @@ const LOCAL_OBJ = 'o';
 const LOCAL_TEMP_OBJ = 't';
 const LOCAL_ARRAY = 'a';
 const LINE_INDEX_OF_NEW_OBJ = 0;
+
+const DEFAULT_MODULE_CACHE = {
+    'cc.Node': 'cc.Node',
+    'cc.Sprite': 'cc.Sprite',
+    'cc.Label': 'cc.Label',
+    'cc.Button': 'cc.Button',
+    'cc.Widget': 'cc.Widget',
+    'cc.Animation': 'cc.Animation',
+    'cc.ClickEvent': false,
+    'cc.PrefabInfo': false
+};
 
 // HELPER CLASSES
 
@@ -117,7 +129,7 @@ Assignments.prototype.writeCode = function (codeArray) {
     }
 };
 
-Assignments.pool = new JS.Pool(function (obj) {
+Assignments.pool = new js.Pool(function (obj) {
                                 obj._exps.length = 0;
                                 obj._targetExp = null;
                             }, 1);
@@ -149,32 +161,13 @@ function equalsToDefault (def, value) {
             (def.constructor === Object && value.constructor === Object)
         ) {
             try {
-                return JSON.stringify(def) === JSON.stringify(value);
+                return Array.isArray(def) && Array.isArray(value) && def.length === 0 && value.length === 0;
             }
             catch (e) {
             }
         }
     }
     return false;
-}
-
-function flattenCodeArray (array, separator) {
-    var strList = [];
-    (function deepFlatten (array) {
-        for (var i = 0; i < array.length; i++) {
-            var item = array[i];
-            if (Array.isArray(item)) {
-                deepFlatten(item);
-            }
-            // else if (item instanceof Declaration) {
-            //     strList.push(item.toString());
-            // }
-            else {
-                strList.push(item);
-            }
-        }
-    })(array);
-    return strList.join(separator);
 }
 
 function getPropAccessor (key) {
@@ -205,6 +198,9 @@ function Parser (obj, parent) {
     this.objs = [];
     this.funcs = [];
 
+    this.funcModuleCache = js.createMap();
+    js.mixin(this.funcModuleCache, DEFAULT_MODULE_CACHE);
+
     // {String[]} - variable names for circular references,
     //              not really global, just local variables shared between sub functions
     this.globalVariables = [];
@@ -224,7 +220,7 @@ function Parser (obj, parent) {
                            '}else{',
                                 LOCAL_OBJ + '=R=new ' + this.getFuncModule(obj.constructor, true) + '();',
                            '}');
-        obj._iN$t = { globalVar: 'R' };
+        js.value(obj, '_iN$t', { globalVar: 'R' }, true);
         this.objsToClear_iN$t.push(obj);
         this.enumerateObject(this.codeArray, obj);
     //}
@@ -234,11 +230,11 @@ function Parser (obj, parent) {
     if (this.globalVariables.length > 0) {
         globalVariablesDeclaration = VAR + this.globalVariables.join(',') + ';';
     }
-    var code = flattenCodeArray(['return (function(R){',
+    var code = Compiler.flattenCodeArray(['return (function(R){',
                                     globalVariablesDeclaration || [],
                                     this.codeArray,
                                     'return o;',
-                                 '})'], CC_DEV ? '\n' : '');
+                                 '})']);
 
     // generate method and bind with objs
     this.result = Function('O', 'F', code)(this.objs, this.funcs);
@@ -257,17 +253,26 @@ function Parser (obj, parent) {
 var proto = Parser.prototype;
 
 proto.getFuncModule = function (func, usedInNew) {
-    var clsName = JS.getClassName(func);
-    var clsNameIsModule = clsName.indexOf('.') !== -1;
-    if (clsNameIsModule) {
-        try {
-            // ensure is module
-            clsNameIsModule = (func === Function('return ' + clsName)());
+    var clsName = js.getClassName(func);
+    if (clsName) {
+        var cache = this.funcModuleCache[clsName];
+        if (cache) {
+            return cache;
+        }
+        else if (cache === undefined) {
+            var clsNameIsModule = clsName.indexOf('.') !== -1;
             if (clsNameIsModule) {
-                return clsName;
+                try {
+                    // ensure is module
+                    clsNameIsModule = (func === Function('return ' + clsName)());
+                    if (clsNameIsModule) {
+                        this.funcModuleCache[clsName] = clsName;
+                        return clsName;
+                    }
+                }
+                catch (e) {}
             }
         }
-        catch (e) {}
     }
     var index = this.funcs.indexOf(func);
     if (index < 0) {
@@ -275,7 +280,11 @@ proto.getFuncModule = function (func, usedInNew) {
         this.funcs.push(func);
     }
     var res = 'F[' + index + ']';
-    return usedInNew ? '(' + res + ')' : res;
+    if (usedInNew) {
+        res = '(' + res + ')';
+    }
+    this.funcModuleCache[clsName] = res;
+    return res;
 };
 
 proto.getObjRef = function (obj) {
@@ -307,32 +316,25 @@ proto.setValueType = function (codeArray, defaultValue, srcValue, targetExpressi
 };
 
 proto.enumerateCCClass = function (codeArray, obj, klass) {
-    var props = klass.__props__;
+    var props = klass.__values__;
     var attrs = Attr.getClassAttrs(klass);
     for (var p = 0; p < props.length; p++) {
         var key = props[p];
-        if (CC_EDITOR && key === '_id') {
-            if (obj instanceof cc._BaseNode || obj instanceof cc.Component) {
+        var val = obj[key];
+        var defaultValue = attrs[key + DEFAULT];
+        if (equalsToDefault(defaultValue, val)) {
+            continue;
+        }
+        if (typeof val === 'object' && val instanceof cc.ValueType) {
+            defaultValue = CCClass.getDefault(defaultValue);
+            if (defaultValue && defaultValue.constructor === val.constructor) {
+                // fast case
+                var targetExpression = LOCAL_OBJ + getPropAccessor(key);
+                this.setValueType(codeArray, defaultValue, val, targetExpression);
                 continue;
             }
         }
-        if (attrs[key + SERIALIZABLE] !== false) {
-            var val = obj[key];
-            var defaultValue = attrs[key + DEFAULT];
-            if (equalsToDefault(defaultValue, val)) {
-                continue;
-            }
-            if (typeof val === 'object' && val instanceof cc.ValueType) {
-                var defaultValue = CCClass.getDefault(defaultValue);
-                if ((defaultValue && defaultValue.constructor) === val.constructor) {
-                    // fast case
-                    var targetExpression = LOCAL_OBJ + getPropAccessor(key);
-                    this.setValueType(codeArray, defaultValue, val, targetExpression);
-                    continue;
-                }
-            }
-            this.setObjProp(codeArray, obj, key, val);
-        }
+        this.setObjProp(codeArray, obj, key, val);
     }
 };
 
@@ -346,10 +348,10 @@ proto.instantiateArray = function (value) {
     var codeArray = [declaration];
 
     // assign a _iN$t flag to indicate that this object has been parsed.
-    value._iN$t = {
+    js.value(value, '_iN$t', {
         globalVar: '',      // the name of declared global variable used to access this object
         source: codeArray,  // the source code array for this object
-    };
+    }, true);
     this.objsToClear_iN$t.push(value);
 
     for (var i = 0; i < value.length; ++i) {
@@ -395,7 +397,7 @@ proto.enumerateField = function (obj, key, value) {
         return escapeForJS(value);
     }
     else {
-        if (key === '_objFlags' && obj instanceof CCObject) {
+        if (key === '_objFlags' && (obj instanceof CCObject)) {
             value &= PersistentMask;
         }
         return value;
@@ -485,12 +487,12 @@ proto.instantiateObj = function (obj) {
     var codeArray = [createCode];
 
     // assign a _iN$t flag to indicate that this object has been parsed.
-    obj._iN$t = {
+    js.value(obj, '_iN$t', {
         globalVar: '',      // the name of declared global variable used to access this object
         source: codeArray,  // the source code array for this object
         //propName: '',     // the propName this object defined in its source code,
         //                  // if defined, use LOCAL_OBJ.propName to access the obj, else just use o
-    };
+    }, true);
     this.objsToClear_iN$t.push(obj);
 
     this.enumerateObject(codeArray, obj);

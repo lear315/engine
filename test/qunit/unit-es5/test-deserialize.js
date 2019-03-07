@@ -209,6 +209,29 @@ if (TestEditorExtends) {
         //deepEqual(Editor.serialize(deserializedAsset), serializedAsset, 'test deserialize');
     });
 
+    test('reference to main asset with formerlySerializedAs', function () {
+        var MyAsset = cc.Class({
+            name: 'MyAsset',
+            properties: {
+                newRefSelf: {
+                    default: null,
+                    formerlySerializedAs: 'oldRefSelf'
+                },
+            }
+        });
+        var asset = new MyAsset();
+        asset.newRefSelf = asset;
+
+        var serializedAsset = Editor.serialize(asset);
+        serializedAsset = serializedAsset.replace(/newRefSelf/g, 'oldRefSelf');
+        var deserializedAsset = cc.deserialize(serializedAsset);
+
+        ok(deserializedAsset.newRefSelf === deserializedAsset, 'should ref to self');
+        //deepEqual(Editor.serialize(deserializedAsset), serializedAsset, 'test deserialize');
+
+        cc.js.unregisterClass(MyAsset);
+    });
+
     test('reference to main asset with target', function () {
         var asset = {};
         asset.refSelf = asset;
@@ -221,22 +244,35 @@ if (TestEditorExtends) {
     });
 
     testWithTarget('circular reference by object', function (useTarget) {
+        var MainAsset = cc.Class({
+            name: 'MainAsset',
+            extends: cc.Asset,
+            properties: {
+                myAsset: {
+                    default: null,
+                    type: cc.Asset
+                },
+            }
+        });
+
         var MyAsset = cc.Class({
             name: 'MyAsset',
-            extends: cc.Asset,
-            ctor: function () {
-                this.refSelf = this;
-                this.refToMain = null;
-            },
             properties: {
-                refSelf: null,
-                refToMain: null
+                refSelf: {
+                    default: null,
+                },
+                refToMain: {
+                    default: null,
+                    type: cc.Asset
+                },
             }
         });
 
         var asset = new MyAsset();
-        var mainAsset = { myAsset: asset };
+        var mainAsset = new MainAsset();
         asset.refToMain = mainAsset;
+        asset.refSelf = asset;
+        mainAsset.myAsset = asset;
 
         var serializedAsset = Editor.serialize(mainAsset);
         delete mainAsset.__id__;
@@ -248,7 +284,7 @@ if (TestEditorExtends) {
 
         deepEqual(deserializedAsset, mainAsset, 'can ref');
 
-        cc.js.unregisterClass(MyAsset);
+        cc.js.unregisterClass(MainAsset, MyAsset);
     });
 
     testWithTarget('circular reference by array', function (useTarget) {

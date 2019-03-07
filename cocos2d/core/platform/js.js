@@ -1,7 +1,8 @@
 /****************************************************************************
  Copyright (c) 2008-2010 Ricardo Quesada
  Copyright (c) 2011-2012 cocos2d-x.org
- Copyright (c) 2013-2014 Chukong Technologies Inc.
+ Copyright (c) 2013-2016 Chukong Technologies Inc.
+ Copyright (c) 2017-2018 Xiamen Yaji Software Co., Ltd.
 
  http://www.cocos2d-x.org
 
@@ -76,13 +77,11 @@ var js = {
     },
 
     /**
-     * This method is deprecated, use cc.js.mixin please.<br>
      * Copy all properties not defined in obj from arguments[1...n]
      * @method addon
      * @param {Object} obj object to extend its properties
      * @param {Object} ...sourceObj source object to copy properties from
      * @return {Object} the result obj
-     * @deprecated
      */
     addon: function (obj) {
         'use strict';
@@ -170,16 +169,44 @@ var js = {
      * @return {Function}
      */
     getSuper (ctor) {
-        if (CC_JSB && ctor.hasOwnProperty('$super')) {
-            // babel runtime uses Object.setPrototypeOf to inherit static members,
-            // so $super will always inheritable even if it is non-enumerable.
-            return ctor.$super;
+        var proto = ctor.prototype; // binded function do not have prototype
+        var dunderProto = proto && Object.getPrototypeOf(proto);
+        return dunderProto && dunderProto.constructor;
+    },
+
+    /**
+     * Checks whether subclass is child of superclass or equals to superclass
+     *
+     * @method isChildClassOf
+     * @param {Function} subclass
+     * @param {Function} superclass
+     * @return {Boolean}
+     */
+    isChildClassOf (subclass, superclass) {
+        if (subclass && superclass) {
+            if (typeof subclass !== 'function') {
+                return false;
+            }
+            if (typeof superclass !== 'function') {
+                if (CC_DEV) {
+                    cc.warnID(3625, superclass);
+                }
+                return false;
+            }
+            if (subclass === superclass) {
+                return true;
+            }
+            for (;;) {
+                subclass = js.getSuper(subclass);
+                if (!subclass) {
+                    return false;
+                }
+                if (subclass === superclass) {
+                    return true;
+                }
+            }
         }
-        else {
-            var proto = ctor.prototype; // binded function do not have prototype
-            var dunderProto = proto && Object.getPrototypeOf(proto);
-            return dunderProto && dunderProto.constructor;
-        }
+        return false;
     },
 
     /**
@@ -192,6 +219,18 @@ var js = {
         for (var i = 0; i < keys.length; i++) {
             delete obj[keys[i]];
         }
+    },
+
+    /**
+     * Checks whether obj is an empty object
+     * @method isEmptyObject
+     * @param {any} obj 
+     */
+    isEmptyObject: function (obj) {
+        for (var key in obj) {
+            return false;
+        }
+        return true;
     },
 
     /**
@@ -242,10 +281,11 @@ var tmpGetSetDesc = {
  * @param {Object} obj
  * @param {String} prop
  * @param {Function} getter
- * @param {Function} setter
+ * @param {Function} [setter=null]
  * @param {Boolean} [enumerable=false]
+ * @param {Boolean} [configurable=false]
  */
-js.getset = function (obj, prop, getter, setter, enumerable) {
+js.getset = function (obj, prop, getter, setter, enumerable, configurable) {
     if (typeof setter !== 'function') {
         enumerable = setter;
         setter = undefined;
@@ -253,6 +293,7 @@ js.getset = function (obj, prop, getter, setter, enumerable) {
     tmpGetSetDesc.get = getter;
     tmpGetSetDesc.set = setter;
     tmpGetSetDesc.enumerable = enumerable;
+    tmpGetSetDesc.configurable = configurable;
     Object.defineProperty(obj, prop, tmpGetSetDesc);
     tmpGetSetDesc.get = null;
     tmpGetSetDesc.set = null;
@@ -353,7 +394,16 @@ function isTempClassId (id) {
     var _idToClass = {};
     var _nameToClass = {};
 
-    function getRegister (key, table) {
+    function setup (key, publicName, table) {
+        js.getset(js, publicName,
+            function () {
+                return Object.assign({}, table);
+            },
+            function (value) {
+                js.clear(table);
+                Object.assign(table, value);
+            }
+        );
         return function (id, constructor) {
             // deregister old
             if (constructor.prototype.hasOwnProperty(key)) {
@@ -389,9 +439,37 @@ cc.js.unregisterClass to remove the id of unused class';
      * @param {Function} constructor
      * @private
      */
-    js._setClassId = getRegister('__cid__', _idToClass);
+    /**
+     * !#en All classes registered in the engine, indexed by ID.
+     * !#zh 引擎中已注册的所有类型，通过 ID 进行索引。
+     * @property _registeredClassIds
+     * @example
+     * // save all registered classes before loading scripts
+     * let builtinClassIds = cc.js._registeredClassIds;
+     * let builtinClassNames = cc.js._registeredClassNames;
+     * // load some scripts that contain CCClass
+     * ...
+     * // clear all loaded classes
+     * cc.js._registeredClassIds = builtinClassIds;
+     * cc.js._registeredClassNames = builtinClassNames;
+     */
+    js._setClassId = setup('__cid__', '_registeredClassIds', _idToClass);
 
-    var doSetClassName = getRegister('__classname__', _nameToClass);
+    /**
+     * !#en All classes registered in the engine, indexed by name.
+     * !#zh 引擎中已注册的所有类型，通过名称进行索引。
+     * @property _registeredClassNames
+     * @example
+     * // save all registered classes before loading scripts
+     * let builtinClassIds = cc.js._registeredClassIds;
+     * let builtinClassNames = cc.js._registeredClassNames;
+     * // load some scripts that contain CCClass
+     * ...
+     * // clear all loaded classes
+     * cc.js._registeredClassIds = builtinClassIds;
+     * cc.js._registeredClassNames = builtinClassNames;
+     */
+    var doSetClassName = setup('__classname__', '_registeredClassNames', _nameToClass);
 
     /**
      * Register the class by specified name manually
@@ -485,40 +563,6 @@ cc.js.unregisterClass to remove the id of unused class';
         }
         return '';
     };
-
-    if (CC_DEV) {
-        js.getset(js, '_registeredClassIds',
-            function () {
-                var dump = {};
-                for (var id in _idToClass) {
-                    dump[id] = _idToClass[id];
-                }
-                return dump;
-            },
-            function (value) {
-                js.clear(_idToClass);
-                for (var id in value) {
-                    _idToClass[id] = value[id];
-                }
-            }
-        );
-        js.getset(js, '_registeredClassNames', 
-            function () {
-                var dump = {};
-                for (var id in _nameToClass) {
-                    dump[id] = _nameToClass[id];
-                }
-                return dump;
-            },
-            function (value) {
-                js.clear(_nameToClass);
-                for (var id in value) {
-                    _nameToClass[id] = value[id];
-                }
-            }
-        );
-    }
-
 })();
 
 /**
@@ -526,30 +570,32 @@ cc.js.unregisterClass to remove the id of unused class';
  * @method obsolete
  * @param {any} obj - YourObject or YourClass.prototype
  * @param {String} obsoleted - "OldParam" or "YourClass.OldParam"
- * @param {String} newPropName - "NewParam"
+ * @param {String} newExpr - "NewParam" or "YourClass.NewParam"
  * @param {Boolean} [writable=false]
  */
-js.obsolete = function (obj, obsoleted, newPropName, writable) {
-    var oldName = /([^.]+)$/.exec(obsoleted)[0];
+js.obsolete = function (obj, obsoleted, newExpr, writable) {
+    var extractPropName = /([^.]+)$/;
+    var oldProp = extractPropName.exec(obsoleted)[0];
+    var newProp = extractPropName.exec(newExpr)[0];
     function get () {
         if (CC_DEV) {
-            cc.warnID(5400, obsoleted, newPropName);
+            cc.warnID(5400, obsoleted, newExpr);
         }
-        return this[newPropName];
+        return this[newProp];
     }
     if (writable) {
-        js.getset(obj, oldName,
+        js.getset(obj, oldProp,
             get,
             function (value) {
                 if (CC_DEV) {
-                    cc.warnID(5401, obsoleted, newPropName);
+                    cc.warnID(5401, obsoleted, newExpr);
                 }
-                this[newPropName] = value;
+                this[newProp] = value;
             }
         );
     }
     else {
-        js.get(obj, oldName, get);
+        js.get(obj, oldProp, get);
     }
 };
 
@@ -574,7 +620,7 @@ var REGEXP_STR = /%s/;
 /**
  * A string tool to construct a string with format string.
  * @method formatStr
- * @param {String|any} msg - A JavaScript string containing zero or more substitution strings.
+ * @param {String|any} msg - A JavaScript string containing zero or more substitution strings (%s).
  * @param {any} ...subst - JavaScript objects with which to replace substitution strings within msg. This gives you additional control over the format of the output.
  * @returns {String}
  * @example
@@ -621,9 +667,9 @@ js.shiftArguments = function () {
 };
 
 /**
- * #en
+ * !#en
  * A simple wrapper of `Object.create(null)` which ensures the return object have no prototype (and thus no inherited members). So we can skip `hasOwnProperty` calls on property lookups. It is a worthwhile optimization than the `{}` literal when `hasOwnProperty` calls are necessary.
- * #zh
+ * !#zh
  * 该方法是对 `Object.create(null)` 的简单封装。`Object.create(null)` 用于创建无 prototype （也就无继承）的空对象。这样我们在该对象上查找属性时，就不用进行 `hasOwnProperty` 判断。在需要频繁判断 `hasOwnProperty` 时，使用这个方法性能会比 `{}` 更高。
  *
  * @method createMap
@@ -633,9 +679,12 @@ js.shiftArguments = function () {
 js.createMap = function (forceDictMode) {
     var map = Object.create(null);
     if (forceDictMode) {
-        const INVALID_IDENTIFIER = '.';
-        map[INVALID_IDENTIFIER] = true;
-        delete map[INVALID_IDENTIFIER];
+        const INVALID_IDENTIFIER_1 = '.';
+        const INVALID_IDENTIFIER_2 = '/';
+        map[INVALID_IDENTIFIER_1] = true;
+        map[INVALID_IDENTIFIER_2] = true;
+        delete map[INVALID_IDENTIFIER_1];
+        delete map[INVALID_IDENTIFIER_2];
     }
     return map;
 };
@@ -819,7 +868,7 @@ js.array = {
  *Details.prototype.reset = function () {
  *    this.uuidList.length = 0;
  *};
- *Details.pool = new JS.Pool(function (obj) {
+ *Details.pool = new js.Pool(function (obj) {
  *    obj.reset();
  *}, 5);
  *Details.pool.get = function () {
@@ -865,7 +914,7 @@ js.array = {
  * constructor(size: number)
  */
 function Pool (cleanupFunc, size) {
-    if (typeof cleanupFunc === 'number') {
+    if (size === undefined) {
         size = cleanupFunc;
         cleanupFunc = null;
     }

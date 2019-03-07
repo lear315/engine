@@ -10,11 +10,11 @@ if (!Math.sign) {
 
 if (!Number.isInteger) {
     Number.isInteger = function (value) {
-        return typeof value === 'number' && (value | 0) === value;
+        return typeof value === 'number' && isFinite(value) && Math.floor(value) === value;
     };
 }
 
-if (!console.time) {
+if (CC_JSB || CC_RUNTIME || !console.time) {
     var Timer = window.performance || Date;
     var _timerTable = Object.create(null);
     console.time = function (label) {

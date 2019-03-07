@@ -1,18 +1,19 @@
 ﻿/****************************************************************************
  Copyright (c) 2013-2016 Chukong Technologies Inc.
+ Copyright (c) 2017-2018 Xiamen Yaji Software Co., Ltd.
 
- http://www.cocos.com
+ https://www.cocos.com/
 
  Permission is hereby granted, free of charge, to any person obtaining a copy
  of this software and associated engine source code (the "Software"), a limited,
-  worldwide, royalty-free, non-assignable, revocable and  non-exclusive license
+  worldwide, royalty-free, non-assignable, revocable and non-exclusive license
  to use Cocos Creator solely to develop games on your target platforms. You shall
   not use Cocos Creator software for developing other software or tools that's
   used for developing games. You are not granted to publish, distribute,
   sublicense, and/or sell copies of Cocos Creator.
 
  The software or tools in this License Agreement are licensed, not sold.
- Chukong Aipu reserves all rights not expressly granted to you.
+ Xiamen Yaji Software Co., Ltd. reserves all rights not expressly granted to you.
 
  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -24,10 +25,11 @@
  ****************************************************************************/
 
 var CCObject = require('./CCObject');
+var CCValueType = require('../value-types/value-type');
 var Destroyed = CCObject.Flags.Destroyed;
 var PersistentMask = CCObject.Flags.PersistentMask;
-var Attr = require('./attribute');
 var _isDomNode = require('./utils').isDomNode;
+var js = require('./js');
 
 /**
  * !#en Clones the object `original` and returns the clone, or instantiate a node from the Prefab.
@@ -125,7 +127,7 @@ function doInstantiate (obj, parent) {
         }
         return null;
     }
-    if (!CC_JSB && _isDomNode && _isDomNode(obj)) {
+    if (_isDomNode && _isDomNode(obj)) {
         if (CC_DEV) {
             cc.errorID(6905);
         }
@@ -156,33 +158,33 @@ function doInstantiate (obj, parent) {
     return clone;
 }
 
-var SERIALIZABLE = Attr.DELIMETER + 'serializable';
 // @param {Object} obj - The object to instantiate, typeof must be 'object' and should not be an array.
 
 function enumerateCCClass (klass, obj, clone, parent) {
-    var props = klass.__props__;
-    var attrs = Attr.getClassAttrs(klass);
+    var props = klass.__values__;
     for (var p = 0; p < props.length; p++) {
         var key = props[p];
-        if (attrs[key + SERIALIZABLE] !== false) {
-            var value = obj[key];
-            if (typeof value === 'object' && value) {
-                clone[key] = value._iN$t || instantiateObj(value, parent);
+        var value = obj[key];
+        if (typeof value === 'object' && value) {
+            var initValue = clone[key];
+            if (initValue instanceof CCValueType &&
+                initValue.constructor === value.constructor) {
+                initValue.set(value);
             }
             else {
-                clone[key] = value;
+                clone[key] = value._iN$t || instantiateObj(value, parent);
             }
         }
-    }
-    if (CC_EDITOR && (obj instanceof cc._BaseNode || obj instanceof cc.Component)) {
-        clone._id = '';
+        else {
+            clone[key] = value;
+        }
     }
 }
 
 function enumerateObject (obj, clone, parent) {
     // 目前使用“_iN$t”这个特殊字段来存实例化后的对象，这样做主要是为了防止循环引用
     // 注意，为了避免循环引用，所有新创建的实例，必须在赋值前被设为源对象的_iN$t
-    obj._iN$t = clone;
+    js.value(obj, '_iN$t', clone, true);
     objsToClearTmpVar.push(obj);
     var klass = obj.constructor;
     if (cc.Class._isCCClass(klass)) {
@@ -219,7 +221,7 @@ function enumerateObject (obj, clone, parent) {
  * @return {Object|Array} - the original non-nil object, typeof must be 'object'
  */
 function instantiateObj (obj, parent) {
-    if (obj instanceof cc.ValueType) {
+    if (obj instanceof CCValueType) {
         return obj.clone();
     }
     if (obj instanceof cc.Asset) {
@@ -230,7 +232,7 @@ function instantiateObj (obj, parent) {
     if (Array.isArray(obj)) {
         var len = obj.length;
         clone = new Array(len);
-        obj._iN$t = clone;
+        js.value(obj, '_iN$t', clone, true);
         for (var i = 0; i < len; ++i) {
             var value = obj[i];
             if (typeof value === 'object' && value) {

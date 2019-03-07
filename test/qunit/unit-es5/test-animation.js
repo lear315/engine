@@ -3,6 +3,7 @@ largeModule('Animation', SetupEngine);
 var color = cc.color;
 var Color = cc.Color;
 var v2 = cc.v2;
+var v3 = cc.v3;
 
 test('curve types', function () {
     var initClipData = cc._Test.initClipData;
@@ -39,107 +40,6 @@ test('curve types', function () {
     strictEqual(entity.x, 0.7 * 100 + 200, 'should wrap time by linear');
 });
 
-test('computeNullRatios', function () {
-    var computeNullRatios = cc._Test.computeNullRatios;
-    var computedRatio;
-    var keyFrames;
-
-    // smoke tests
-    keyFrames = [
-        { ratio: 0.1 }
-    ];
-    computeNullRatios([]);
-    computeNullRatios(keyFrames);
-    strictEqual(keyFrames[0].ratio, 0.1, 'should not change exists ratio');
-    computedRatio = keyFrames[0].computedRatio;
-    ok(computedRatio === 0.1 || computedRatio === undefined, 'computedRatio should == ratio if presented');
-    //
-    keyFrames = [
-        {}
-    ];
-    computeNullRatios(keyFrames);
-    strictEqual(keyFrames[0].ratio, undefined, 'should not modify keyFrames');
-    strictEqual(keyFrames[0].computedRatio, 0, 'computedRatio should be 0 if only one frame');
-
-    keyFrames = [
-        {},
-        {}
-    ];
-    computeNullRatios(keyFrames);
-    strictEqual(keyFrames[0].computedRatio, 0, 'computedRatio should be 0 on first frame');
-    strictEqual(keyFrames[1].computedRatio, 1, 'computedRatio should be 1 on last frame');
-
-    keyFrames = [
-        {},
-        {},
-        {},
-        {}
-    ];
-    computeNullRatios(keyFrames);
-    strictEqual(keyFrames[1].computedRatio, 1 / 3, 'computedRatio should be 1/3 to make the difference between subsequent keyframe ratios are equal');
-    strictEqual(keyFrames[2].computedRatio, 2 / 3, 'computedRatio should be 2/3 to make the difference between subsequent keyframe ratios are equal');
-
-    keyFrames = [
-        {ratio: 0},
-        {},
-        {ratio: 0.5}
-    ];
-    computeNullRatios(keyFrames);
-    strictEqual(keyFrames[1].computedRatio, 0.25, 'computedRatio should be 0.25 to make the difference between subsequent keyframe ratios are equal');
-});
-
-test('EntityAnimator.animate', function () {
-
-    var EntityAnimator = cc._Test.EntityAnimator;
-    var entity = new cc.Node();
-    var renderer = entity.addComponent(cc.Sprite);
-    renderer.colorProp = Color.BLACK;
-
-    var animator = new EntityAnimator(entity);
-    var animation = animator.animate([
-        {
-            props: { x: 50, scaleX: 10 },
-            comps: {
-                'cc.Sprite': { colorProp: Color.WHITE }
-            }
-        },
-        {
-            props: { x: 100, scaleX: 20 },
-            comps: {
-                'cc.Sprite': { colorProp: color(1, 1, 1, 0) }
-            }
-        }
-    ]);
-
-    var posCurve = animation.curves[0];
-    var scaleCurve = animation.curves[1];
-    var colorCurve = animation.curves[2];
-    strictEqual(animation.curves.length, 3, 'should create 3 curve');
-    strictEqual(posCurve.target, entity, 'target of posCurve should be entity');
-    strictEqual(posCurve.prop, 'x', 'propName of posCurve should be x');
-    strictEqual(scaleCurve.target, entity, 'target of scaleCurve should be entity');
-    strictEqual(scaleCurve.prop, 'scaleX', 'propName of scaleCurve should be scaleX');
-    strictEqual(colorCurve.target, renderer, 'target of colorCurve should be sprite renderer');
-    strictEqual(colorCurve.prop, 'colorProp', 'propName of colorCurve should be color');
-
-    deepEqual(posCurve.values, [50, 100], 'values of posCurve should equals keyFrames');
-    deepEqual(scaleCurve.values, [10, 20], 'values of scaleCurve should equals keyFrames');
-    deepEqual(colorCurve.values, [Color.WHITE, color(1, 1, 1, 0)], 'values of colorCurve should equals keyFrames');
-
-    deepEqual(posCurve.ratios, [0, 1], 'ratios of posCurve should equals keyFrames');
-    deepEqual(scaleCurve.ratios, [0, 1], 'ratios of scaleCurve should equals keyFrames');
-    deepEqual(colorCurve.ratios, [0, 1], 'ratios of colorCurve should equals keyFrames');
-
-    animator.update(0);
-    deepEqual(entity.x, 50, 'first frame should play until the end of this frame');
-
-    animator.update(100);
-    strictEqual(animator.isPlaying, false, 'animator should not update if non playing animation');
-    deepEqual(entity.x, 100, 'first frame should play until the end of this frame');
-
-    animator.stop();
-});
-
 test('DynamicAnimCurve', function () {
     var DynamicAnimCurve = cc._Test.DynamicAnimCurve;
     var anim = new DynamicAnimCurve();
@@ -164,7 +64,7 @@ test('DynamicAnimCurve', function () {
     anim.ratios = [0.0, 1.0];
     anim.sample(null, 0.1, null);
 
-    deepEqual(target.position, v2(55, 456), 'The composed position should animated');
+    deepEqual(target.position, v2(55, 456, 0), 'The composed position should animated');
 
     anim.target = target;
     anim.prop = 'foo';
@@ -176,61 +76,9 @@ test('DynamicAnimCurve', function () {
     deepEqual(target.foo, { bar: color(128, 128, 128, 140) }, 'The composed color should animated');
 });
 
-test('AnimationNode', function () {
-    var EntityAnimator = cc._Test.EntityAnimator;
-
-    var entity = new cc.Node();
-    entity.x = 321;
-    var renderer = entity.addComponent(cc.Sprite);
-    renderer.colorProp = Color.BLACK;
-
-    var animator = new EntityAnimator(entity);
-    var animation = animator.animate([
-        {
-            props: { x: 50, scale: v2(1, 1) },
-            comps: {
-                'cc.Sprite': { colorProp: Color.WHITE }
-            }
-        },
-        {
-            props: { x: 100, scale: v2(2, 2) },
-            comps: {
-                'cc.Sprite': { colorProp: color(255, 255, 255, 0) }
-            }
-        }
-    ], {
-        delay: 0.3,
-        duration: 1.3,
-        speed: 0.5,
-        repeatCount: 1.25
-    });
-
-    animation.update(0.2);
-    deepEqual(entity.x, 321, 'should not play animation while delay');
-
-    animation.update(0.2);
-    deepEqual(entity.x, 50, 'should play first key frame after delay');
-
-    var actualDuration = animation.duration / animation.speed;
-    animation.update(actualDuration / 2);
-    deepEqual(entity.scale, 1.5, 'should play second key frame');
-
-    animation.update(actualDuration / 2);
-    deepEqual(renderer.colorProp, color(255, 255, 255, 0), 'should play the last key frame');
-
-    animation.update(actualDuration / 4);
-    deepEqual(renderer.colorProp, color(255, 255, 255, 255 * 0.75), 'should repeat animation');
-    strictEqual(animation.isPlaying, false, 'should stop animation');
-
-    animation.update(actualDuration / 4);
-    deepEqual(renderer.colorProp, color(255, 255, 255, 255 * 0.75), 'should not animate if stopped');
-
-    animator.stop();
-});
-
-test('AnimationNode.getWrappedInfo', function () {
+test('AnimationState.getWrappedInfo', function () {
     var info;
-    var animation = new cc.AnimationNode();
+    var animation = new cc.AnimationState();
 
     animation.duration = 2;
     animation.wrapMode = cc.WrapMode.PingPong;
@@ -291,46 +139,6 @@ test('AnimationNode.getWrappedInfo', function () {
 
 });
 
-test('wrapMode', function () {
-    var EntityAnimator = cc._Test.EntityAnimator;
-
-    var entity = new cc.Node();
-
-    var animator = new EntityAnimator(entity);
-    var animation = animator.animate([
-        {
-            props: { x: 10 },
-        },
-        {
-            props: { x: 110 },
-        }
-    ], {
-        delay: 0.3,
-        duration: 1.3,
-        speed: 0.5,
-        wrapMode: cc.WrapMode.Reverse,
-        repeatCount: Infinity
-    });
-
-    animation.update(0.3);
-
-    var actualDuration = animation.duration / animation.speed;
-    animation.update(actualDuration / 4);
-    strictEqual(entity.x, 75 + 10, 'should play reversed animation');
-
-    animation.wrapMode = cc.WrapMode.PingPong;
-    animation.time = 0;
-    animation.update(actualDuration / 4);
-    strictEqual(entity.x, 25 + 10, 'should play animation as specified in 0 iteration');
-    animation.update(actualDuration * 6);
-    close(entity.x, 25 + 10, 0.000001, 'should play animation as specified in even iterations');
-
-    animation.time = 0;
-    animation.update(actualDuration / 4 + actualDuration);
-    strictEqual(entity.x, 75 + 10, 'should played in the reverse direction in odd iterations');
-
-    animator.stop();
-});
 
 test('createBatchedProperty', function () {
     var createBatchedProperty = cc._Test.createBatchedProperty;
@@ -469,6 +277,8 @@ test('Animation Component', function () {
 
     entity.x = 400;
 
+    cc.director.getScene().addChild(entity);
+
     var clip = new cc.AnimationClip();
     clip._duration = 10;
     clip._name = 'test';
@@ -508,6 +318,11 @@ test('Animation Component', function () {
     strictEqual(animation.getAnimationState('test'), null, 'should remove state');
 
     animation.stop();
+
+    animation.addClip(clip);
+    animation.play('test');
+    cc.director.runSceneImmediate(new cc.Scene());
+    strictEqual(!!(animation._animator && animation._animator.isPlaying), false, 'animation should be stopped after load scene');
 });
 
 
@@ -589,22 +404,20 @@ test('SampledAnimCurve', function () {
     state = new cc.AnimationState(clip);
     initClipData(entity, state);
 
-    strictEqual(state.curves[0] instanceof cc._Test.SampledAnimCurve, true, 'should create SampledAnimCurve');
-
     state.time = 0.2;
     state.sample();
 
-    deepEqual(entity.position, v2(0, 0), 'entity position should be (0,0)');
+    deepEqual(entity.position, v3(0, 0, 0), 'entity position should be (0, 0, 0)');
 
     state.time = 0.7;
     state.sample();
 
-    deepEqual(entity.position, v2(100, 100), 'entity position should be (100, 100)');
+    deepEqual(entity.position, v3(100, 100, 0), 'entity position should be (100, 100, 0)');
 
     state.time = 0.9;
     state.sample();
 
-    deepEqual(entity.position, v2(100, 100), 'entity position should be (100, 100)');
+    deepEqual(entity.position, v3(100, 100, 0), 'entity position should be (100, 100, 0)');
 });
 
 
@@ -644,6 +457,8 @@ test('EventAnimCurve', function () {
 
     var entity = new cc.Node();
     entity.addComponent(MyComp);
+
+    cc.director.getScene().addChild(entity);
 
     var animation = entity.addComponent(cc.Animation);
 
@@ -727,6 +542,7 @@ test('EventAnimCurve', function () {
     animation.play('test');
     state.wrapMode = cc.WrapMode.Loop;
     state.repeatCount = Infinity;
+    manager.update(0);
     manager.update(1.7);
     calls = [];
     manager.update(0.3);
@@ -746,6 +562,7 @@ test('EventAnimCurve', function () {
     animation.play('test');
     state.wrapMode = cc.WrapMode.Loop;
     state.repeatCount = Infinity;
+    manager.update(0);
     manager.update(1.7);
     calls = [];
     manager.update(0.5);
@@ -765,6 +582,7 @@ test('EventAnimCurve', function () {
     animation.play('test');
     state.wrapMode = cc.WrapMode.Reverse;
     state.repeatCount = 1;
+    manager.update(0);
     calls = [];
     manager.update(0.1);
     deepEqual(calls, [], 'should triggered no events if wrapMode is Reverse');
@@ -821,6 +639,7 @@ test('EventAnimCurve', function () {
     animation.play('test');
     state.wrapMode = cc.WrapMode.PingPong;
     state.repeatCount = Infinity;
+    manager.update(0);
     manager.update(1.7);
     calls = [];
     manager.update(0.5);
@@ -848,6 +667,7 @@ test('EventAnimCurve', function () {
     animation.play('test');
     state.wrapMode = cc.WrapMode.PingPongReverse;
     state.repeatCount = Infinity;
+    manager.update(0);
     manager.update(1.7);
     calls = [];
     manager.update(0.5);
@@ -863,6 +683,7 @@ test('EventAnimCurve', function () {
     state.speed = -1;
     state.wrapMode = cc.WrapMode.Normal;
     state.repeatCount = Infinity;
+    manager.update(0);
     calls = [];
     manager.update(0.5);
     deepEqual(calls, [
@@ -879,6 +700,7 @@ test('EventAnimCurve', function () {
     state.speed = -1;
     state.wrapMode = cc.WrapMode.PingPongReverse;
     state.repeatCount = Infinity;
+    manager.update(0);
     manager.update(1.7);
     calls = [];
     manager.update(0.5);
@@ -968,6 +790,7 @@ test('EventAnimCurve', function () {
     animation.play('test');
     state.wrapMode = cc.WrapMode.PingPong;
     state.setTime(0);
+    manager.update(0);
     calls = [];
     manager.update(1);
     manager.update(2);
@@ -989,6 +812,7 @@ test('EventAnimCurve', function () {
     state.wrapMode = cc.WrapMode.LoopReverse;
     state.setTime(0);
     calls = [];
+    manager.update(0);
     manager.update(2);
     deepEqual(calls, [
         {
@@ -1097,6 +921,8 @@ test('EventAnimCurve', function () {
 test('stop Animation', function () {
     var entity = new cc.Node();
     var animation = entity.addComponent(cc.Animation);
+    
+    cc.director.getScene().addChild(entity);
 
     var clip = new cc.AnimationClip();
     clip._name = 'test';
@@ -1111,31 +937,31 @@ test('stop Animation', function () {
     };
 
     var animationManager = cc.director.getAnimationManager();
-    animationManager._animators.array.length = 0;
+    animationManager._anims.array.length = 0;
 
     animation.addClip(clip);
     animation._init();
 
     animation.play('test');
 
-    strictEqual(animationManager._animators.array.length, 1, 'playing animators should be 1');
+    strictEqual(animationManager._anims.array.length, 1, 'playing animators should be 1');
     strictEqual(animation._animator._anims.array.length, 1, 'playing anims should be 1');
 
     animationManager.update(0);
     animationManager.update(1);
 
-    strictEqual(animationManager._animators.array.length, 0, 'playing animators should be 0');
+    strictEqual(animationManager._anims.array.length, 0, 'playing animators should be 0');
     strictEqual(animation._animator._anims.array.length, 0, 'playing anims should be 0');
 
     animation.play('test');
     animationManager.update(0.5);
 
-    strictEqual(animationManager._animators.array.length, 1, 'playing animators should be 1');
+    strictEqual(animationManager._anims.array.length, 1, 'playing animators should be 1');
     strictEqual(animation._animator._anims.array.length, 1, 'playing anims should be 1');
 
     animation.stop();
 
-    strictEqual(animationManager._animators.array.length, 0, 'playing animators should be 0');
+    strictEqual(animationManager._anims.array.length, 0, 'playing animators should be 0');
     strictEqual(animation._animator._anims.array.length, 0, 'playing anims should be 0');
 });
 
@@ -1292,19 +1118,19 @@ test('animation removeClip', function () {
 test('animation callback', function () {
     var type; 
 
-    function callback (event) {
-        var state = event.detail;
-
+    function callback (t, state) {
         strictEqual(state instanceof cc.AnimationState, true);
         strictEqual(state.name === 'move', true);
 
-        type = event.type;
+        type = t;
     }
 
     var manager = cc.director.getAnimationManager();
 
     var entity = new cc.Node();
     var animation = entity.addComponent(cc.Animation);
+
+    cc.director.getScene().addChild(entity);
 
     var clip = new cc.AnimationClip();
     clip._name = 'move';
@@ -1381,8 +1207,8 @@ test('animation callback', function () {
     animation.addClip(clip);
 
     var list = [];
-    function callback2 (event) {
-        list.push([event.detail.name, event.type]);
+    function callback2 (t, state) {
+        list.push([state.name, t]);
     }
 
     animation.play('move');
@@ -1530,18 +1356,18 @@ test('animation pause/resume should remove animation-actor from animation manage
     var manager = cc.director.getAnimationManager();
 
     var state = animation.play('test');
-    strictEqual(manager._animators.array.length, 1, 'should add 1 animation to animation manager');
+    strictEqual(manager._anims.array.length, 1, 'should add 1 animation to animation manager');
 
     animation.pause();
-    strictEqual(manager._animators.array.length, 0, 'should remove animation from animation manager');
+    strictEqual(manager._anims.array.length, 0, 'should remove animation from animation manager');
     strictEqual(state.animator, null, 'should unbind animator to animation state when pause animation');
 
     animation.resume();
-    strictEqual(manager._animators.array.length, 1, 'should add 1 animation to animation manager');
+    strictEqual(manager._anims.array.length, 1, 'should add 1 animation to animation manager');
     strictEqual(state.animator, animation._animator, 'should rebind animator to animation state when pause animation');
     
     animation.stop();
-    strictEqual(manager._animators.array.length, 0, 'should remove animation from animation manager');
+    strictEqual(manager._anims.array.length, 0, 'should remove animation from animation manager');
 
     // should not see error log in console
     animation.play('test');
@@ -1551,5 +1377,43 @@ test('animation pause/resume should remove animation-actor from animation manage
     animation.play('test');
     entity.parent = null;
 
-    strictEqual(manager._animators.array.length, 0, 'should remove animation from animation manager');
+    strictEqual(manager._anims.array.length, 0, 'should remove animation from animation manager');
+});
+
+
+test('animation play on load', function () {
+    var entity = new cc.Node();
+
+    var animation = entity.addComponent(cc.Animation);
+    animation.playOnLoad = true;
+
+    var clip1 = new cc.AnimationClip();
+    clip1._name = 'clip1';
+    clip1._duration = 1;
+
+    var clip2 = new cc.AnimationClip();
+    clip2._name = 'clip2';
+    clip2._duration = 1;
+
+
+    animation.addClip(clip1);
+    animation.addClip(clip2);
+
+    animation._defaultClip = clip1;
+
+    animation.play('clip2');
+    
+    entity.parent = cc.director.getScene();
+    animation.start();
+
+    strictEqual(animation.getAnimationState('clip1').isPlaying, false, 'default clip should not be played if there is playing animation');
+    strictEqual(animation.getAnimationState('clip2').isPlaying, true, 'should play the specified animation');
+
+    entity.parent = null;
+});
+
+test('quickFindIndex', function () {
+    var ratios = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
+    var ratio = 0.7;
+    strictEqual(cc._Test.quickFindIndex(ratios, ratio), 7, 'should find ratio at index 7');
 });

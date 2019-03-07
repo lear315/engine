@@ -1,18 +1,19 @@
 /****************************************************************************
  Copyright (c) 2016 Chukong Technologies Inc.
+ Copyright (c) 2017-2018 Xiamen Yaji Software Co., Ltd.
 
- http://www.cocos.com
+ https://www.cocos.com/
 
  Permission is hereby granted, free of charge, to any person obtaining a copy
  of this software and associated engine source code (the "Software"), a limited,
- worldwide, royalty-free, non-assignable, revocable and  non-exclusive license
+ worldwide, royalty-free, non-assignable, revocable and non-exclusive license
  to use Cocos Creator solely to develop games on your target platforms. You shall
  not use Cocos Creator software for developing other software or tools that's
  used for developing games. You are not granted to publish, distribute,
  sublicense, and/or sell copies of Cocos Creator.
 
  The software or tools in this License Agreement are licensed, not sold.
- Chukong Aipu reserves all rights not expressly granted to you.
+ Xiamen Yaji Software Co., Ltd. reserves all rights not expressly granted to you.
 
  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -37,6 +38,10 @@ var DragonBonesAsset = cc.Class({
     name: 'dragonBones.DragonBonesAsset',
     extends: cc.Asset,
 
+    ctor () {
+        this.reset();
+    },
+
     properties: {
         _dragonBonesJson : '',
 
@@ -53,7 +58,18 @@ var DragonBonesAsset = cc.Class({
                 this._dragonBonesJson = value;
                 this.reset();
             }
-        }
+        },
+
+        _nativeAsset: {
+            get () {
+                return this._buffer;
+            },
+            set (bin) {
+                this._buffer = bin.buffer || bin;
+                this.reset();
+            },
+            override: true
+        },
     },
 
     statics: {
@@ -68,32 +84,75 @@ var DragonBonesAsset = cc.Class({
         return callback(null, node);
     },
 
-    reset : function() {
+    reset () {
+        this._dragonBonesData = null;
         if (CC_EDITOR) {
-            this._dragonBonesDataCache = null;
             this._armaturesEnum = null;
+        }
+    },
+
+    init (factory) {
+        if (CC_EDITOR) {
+            this._factory = factory || new dragonBones.CCFactory();
+        } else {
+            this._factory = factory;
+        }
+
+        if (this._dragonBonesData) {
+            let hasSame = this.checkSameNameData(this._dragonBonesData);
+            if (!hasSame) {
+                this._factory.addDragonBonesData(this._dragonBonesData);
+            }
+        }
+        else {
+            if (this.dragonBonesJson) {
+                this.initWithRawData(JSON.parse(this.dragonBonesJson), false);
+            } else {
+                this.initWithRawData(this._nativeAsset, true);
+            }
+        }
+    },
+
+    checkSameNameData (dragonBonesData) {
+        let sameNamedDragonBonesData = this._factory.getDragonBonesData(dragonBonesData.name);
+        if (sameNamedDragonBonesData) {
+            // already added asset, see #2002
+            let armatureNames = dragonBonesData.armatureNames;
+            for (let i = 0; i < armatureNames.length; i++) {
+                let armatureName = armatureNames[i];
+                if (!sameNamedDragonBonesData.armatures[armatureName]) {
+                    sameNamedDragonBonesData.addArmature(dragonBonesData.armatures[armatureName]);
+                }
+            }
+            this._dragonBonesData = sameNamedDragonBonesData;
+            return true;
+        }
+        return false;
+    },
+
+    initWithRawData (rawData, isBinary) {
+        if (!rawData) {
+            return;
+        }
+
+        let dragonBonesData = this._factory.parseDragonBonesDataOnly(rawData);
+        let hasSame = this.checkSameNameData(dragonBonesData);
+        if (!hasSame) {
+            this._dragonBonesData = dragonBonesData;
+            this._factory.handleTextureAtlasData(isBinary);
+            this._factory.addDragonBonesData(dragonBonesData);
         }
     },
 
     // EDITOR
 
-    getRuntimeData: CC_EDITOR && function () {
-        if (!this._dragonBonesDataCache) {
-            var factory = new dragonBones.CCFactory();
-            var jsonObj = JSON.parse(this._dragonBonesJson);
-            this._dragonBonesDataCache = factory.parseDragonBonesData(jsonObj);
-        }
-
-        return this._dragonBonesDataCache;
-    },
-
     getArmatureEnum: CC_EDITOR && function () {
         if (this._armaturesEnum) {
             return this._armaturesEnum;
         }
-        var data = this.getRuntimeData();
-        if (data) {
-            var armatureNames = data.armatureNames;
+        this.init();
+        if (this._dragonBonesData) {
+            var armatureNames = this._dragonBonesData.armatureNames;
             var enumDef = {};
             for (var i = 0; i < armatureNames.length; i++) {
                 var name = armatureNames[i];
@@ -105,9 +164,9 @@ var DragonBonesAsset = cc.Class({
     },
 
     getAnimsEnum: CC_EDITOR && function (armatureName) {
-        var data = this.getRuntimeData(true);
-        if (data) {
-            var armature = data.getArmature(armatureName);
+        this.init();
+        if (this._dragonBonesData) {
+            var armature = this._dragonBonesData.getArmature(armatureName);
             if (!armature) {
                 return null;
             }
@@ -124,6 +183,15 @@ var DragonBonesAsset = cc.Class({
             return cc.Enum(enumDef);
         }
         return null;
+    },
+
+    destroy () {
+        var useGlobalFactory = !CC_JSB;
+        if (useGlobalFactory && this._dragonBonesData) {
+            var factory = dragonBones.CCFactory.getInstance();
+            factory.removeDragonBonesData(this._dragonBonesData.name, true);
+        }
+        this._super();
     },
 });
 

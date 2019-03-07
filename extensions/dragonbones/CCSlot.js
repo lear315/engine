@@ -1,5 +1,6 @@
 /****************************************************************************
  Copyright (c) 2016 Chukong Technologies Inc.
+ Copyright (c) 2017-2018 Xiamen Yaji Software Co., Ltd.
 
  http://www.cocos2d-x.org
 
@@ -22,10 +23,35 @@
  THE SOFTWARE.
  ****************************************************************************/
 
+import { mat4 } from '../../cocos2d/core/vmath';
+
+const BinaryOffset = dragonBones.BinaryOffset;
+const BoneType  = dragonBones.BoneType;
+
 dragonBones.CCSlot = cc.Class({
     name: 'dragonBones.CCSlot',
     extends: dragonBones.Slot,
-    _renderDisplay : null,
+
+    ctor () {
+        this._localVertices = [];
+        this._indices = [];
+        this._matrix = mat4.create();
+        this._worldMatrix = mat4.create();
+        this._worldMatrixDirty = true;
+        this._visible = false;
+        this._color = cc.color();
+    },
+
+    _onClear () {
+        this._super();
+        this._localVertices.length = 0;
+        this._indices.length = 0;
+        mat4.identity(this._matrix);
+        mat4.identity(this._worldMatrix);
+        this._worldMatrixDirty = true;
+        this._color = cc.color();
+        this._visible = false;
+    },
 
     statics : {
         toString: function () {
@@ -33,367 +59,320 @@ dragonBones.CCSlot = cc.Class({
         }
     },
 
-    _onClear : function () {
-        dragonBones.Slot.prototype._onClear.call(this);
-        this._renderDisplay = null;
+    // just for adapt to dragonbones api,no need to do any thing
+    _onUpdateDisplay () {
     },
 
-    _onUpdateDisplay : function () {
-        if (!this._rawDisplay) {
-            this._rawDisplay = new cc.Scale9Sprite();
-        }
-
-        this._renderDisplay = this._display || this._rawDisplay;
+    // just for adapt to dragonbones api,no need to do any thing
+    _initDisplay (value) {
     },
 
-    _initDisplay : function (value) {
-
+    _addDisplay () {
+        this._visible = true;
     },
 
-    _addDisplay : function () {
-        var container = this._armature._display;
-        container.addChild(this._renderDisplay);
+    // just for adapt to dragonbones api,no need to do any thing
+    _replaceDisplay (value) {
     },
 
-    _replaceDisplay : function (value) {
-        var container = this._armature._display;
-        var prevDisplay = value;
-        container.addChild(this._renderDisplay, prevDisplay.getLocalZOrder());
-        container.removeChild(prevDisplay);
+    _removeDisplay () {
+        this._visible = false;
     },
 
-    _removeDisplay : function () {
-        this._renderDisplay.removeFromParent();
+    // just for adapt to dragonbones api,no need to do any thing
+    _disposeDisplay (object) {
     },
 
-    _disposeDisplay : function (object) {
-
+    // just for adapt to dragonbones api,no need to do any thing
+    _updateVisible () {
     },
 
-    _updateVisible : function () {
-        this._renderDisplay.setVisible(this._parent.visible);
+    // just for adapt to dragonbones api,no need to do any thing
+    _updateZOrder () {
     },
 
-    _updateZOrder: function() {
-        if (!this._renderDisplay._parent) {
-            var container = this._armature._display;
-            container.addChild(this._renderDisplay, this._zOrder);
-        } else {
-            this._renderDisplay.setLocalZOrder(this._zOrder);
-        }
-    },
-
-    _updateBlendMode : function () {
-        if (this._renderDisplay instanceof cc.Scale9Sprite) {
-            switch (this._blendMode) {
-            case 0: // BlendMode Normal
-                break;
-            case 1: // BlendMode Add
-                var texture = this._renderDisplay._spriteFrame.getTexture();
-                if (texture && texture.hasPremultipliedAlpha()) {
-                    this._renderDisplay.setBlendFunc(cc.BlendFunc.BlendFactor.ONE, cc.BlendFunc.BlendFactor.ONE);
-                }
-                else {
-                    this._renderDisplay.setBlendFunc(cc.BlendFunc.BlendFactor.SRC_ALPHA, cc.BlendFunc.BlendFactor.ONE);
-                }
-                break;
-            default:
-                break;
-            }
-        }
-        else if (this._childArmature) {
-            var childSlots = this._childArmature.getSlots();
-            for (var i = 0, l = childSlots.length; i < l; i++) {
-                var slot = childSlots[i];
+    _updateBlendMode () {
+        if (this._childArmature) {
+            let childSlots = this._childArmature.getSlots();
+            for (let i = 0, l = childSlots.length; i < l; i++) {
+                let slot = childSlots[i];
                 slot._blendMode = this._blendMode;
                 slot._updateBlendMode();
             }
         }
     },
 
-    _updateColor : function() {
-        this._renderDisplay.setOpacity(this._colorTransform.alphaMultiplier * 255);
-        var r = this._colorTransform.redMultiplier * 255;
-        var g = this._colorTransform.greenMultiplier * 255;
-        var b = this._colorTransform.blueMultiplier * 255;
-        this._renderDisplay.setColor(cc.color(r, g, b));
+    _updateColor () {
+        let c = this._color;
+        c.r = this._colorTransform.redMultiplier * 255;
+        c.g = this._colorTransform.greenMultiplier * 255;
+        c.b = this._colorTransform.blueMultiplier * 255;
+        c.a = this._colorTransform.alphaMultiplier * 255;
     },
 
-    _updateFilters : function () {
-
+    //return dragonBones.CCTexture2D
+    getTexture () {
+        return this._textureData && this._textureData.spriteFrame && this._textureData.spriteFrame.getTexture();
     },
 
-    _updateFrame : function () {
+    _updateFrame () {
+        this._indices.length = 0;
+        let indices = this._indices,
+            localVertices = this._localVertices;
+
+        indices.length = 0;
+        localVertices.length = 0;
+
+        let currentTextureData = this._textureData;
+
         // update the frame
-        if (this._display && this._displayIndex >= 0) {
-            var rawDisplayData = this._displayIndex < this._displayDataSet.displays.length ? this._displayDataSet.displays[this._displayIndex] : null;
-            var replacedDisplayData = this._displayIndex < this._replacedDisplayDataSet.length ? this._replacedDisplayDataSet[this._displayIndex] : null;
-            var currentDisplayData = replacedDisplayData || rawDisplayData;
-            var currentTextureData = currentDisplayData.texture;
+        if (!this._display || this._displayIndex < 0 || !currentTextureData) return;
+        let currentDisplayData = this._displayIndex < this.rawDisplayDatas.length ? this.rawDisplayDatas[this._displayIndex] : null;
 
-            if (currentTextureData) {
-                var textureAtlasTexture = currentTextureData.parent.texture;
-                if (textureAtlasTexture && (!currentTextureData.texture || currentTextureData.texture.getTexture() !== textureAtlasTexture)) {
-                    // Create and cache texture
-                    var rect = cc.rect(currentTextureData.region.x, currentTextureData.region.y,
-                                       currentTextureData.region.width, currentTextureData.region.height);
-                    var offset = cc.p(0, 0);
-                    var size = cc.size(currentTextureData.region.width, currentTextureData.region.height);
+        let textureAtlas = this._armature._replacedTexture || currentTextureData.parent.renderTexture;
+        if (textureAtlas && (!currentTextureData.spriteFrame || currentTextureData.spriteFrame.getTexture() !== textureAtlas)) {
+            // Create and cache texture
+            let rect = cc.rect(currentTextureData.region.x, currentTextureData.region.y,
+                                currentTextureData.region.width, currentTextureData.region.height);
+            let offset = cc.v2(0, 0);
+            let size = cc.size(currentTextureData.region.width, currentTextureData.region.height);
 
-                    currentTextureData.texture = new cc.SpriteFrame();
-                    currentTextureData.texture.setTexture(textureAtlasTexture, rect, false, offset, size);
+            currentTextureData.spriteFrame = new cc.SpriteFrame();
+            currentTextureData.spriteFrame.setTexture(textureAtlas, rect, false, offset, size);
+        }
+
+        let textureAtlasWidth = textureAtlas.width;
+        let textureAtlasHeight = textureAtlas.height;
+        let region = currentTextureData.region;
+
+        let meshData = this._meshData;
+        if (meshData) {
+            const scale = this._armature._armatureData.scale;
+            const data = meshData.parent.parent.parent;
+            const intArray = data.intArray;
+            const floatArray = data.floatArray;
+            const vertexCount = intArray[meshData.offset + BinaryOffset.MeshVertexCount];
+            const triangleCount = intArray[meshData.offset + BinaryOffset.MeshTriangleCount];
+            let vertexOffset = intArray[meshData.offset + BinaryOffset.MeshFloatOffset];
+
+            if (vertexOffset < 0) {
+                vertexOffset += 65536; // Fixed out of bouds bug. 
+            }
+
+            const uvOffset = vertexOffset + vertexCount * 2;
+
+            for (let i = 0, l = vertexCount; i < l; i++) {
+                let x = floatArray[vertexOffset + i*2] * scale;
+                let y = -floatArray[vertexOffset + i*2 + 1] * scale;  
+
+                let u = (region.x + floatArray[uvOffset + i*2] * region.width) / textureAtlasWidth;
+                let v = (region.y + floatArray[uvOffset + i*2 + 1] * region.height) / textureAtlasHeight;
+
+                localVertices.push({ x, y, u, v});
+            }
+
+            for (let i = 0; i < triangleCount * 3; ++i) {
+                indices.push(intArray[meshData.offset + BinaryOffset.MeshVertexIndices + i]);
+            }
+
+            this._pivotX = 0;
+            this._pivotY = 0;
+        }
+        else {
+            let scale = this._armature.armatureData.scale;
+            this._pivotX = currentDisplayData.pivot.x;
+            this._pivotY = currentDisplayData.pivot.y;
+
+            let rectData = currentTextureData.frame || currentTextureData.region;
+            let width = rectData.width * scale;
+            let height = rectData.height * scale;
+            if (!currentTextureData.frame && currentTextureData.rotated) {
+                width = rectData.height;
+                height = rectData.width;
+            }
+
+            this._pivotX *= width;
+            this._pivotY *= height;
+
+            if (currentTextureData.frame) {
+                this._pivotX += currentTextureData.frame.x * scale;
+                this._pivotY += currentTextureData.frame.y * scale;
+            }
+
+            this._pivotY -= region.height * scale;
+            
+            for (let i = 0; i < 4; i++) {
+                localVertices.push({});
+            }
+
+            let l = region.x / textureAtlasWidth;
+            let b = (region.y + region.height) / textureAtlasHeight;
+            let r = (region.x + region.width) / textureAtlasWidth;
+            let t = region.y / textureAtlasHeight;
+            localVertices[0].u = l; localVertices[0].v = b;
+            localVertices[1].u = r; localVertices[1].v = b;
+            localVertices[2].u = l; localVertices[2].v = t;
+            localVertices[3].u = r; localVertices[3].v = t;
+
+            localVertices[0].x = localVertices[2].x = 0;
+            localVertices[1].x = localVertices[3].x = region.width;
+            localVertices[0].y = localVertices[1].y = 0;
+            localVertices[2].y = localVertices[3].y = region.height;
+
+            indices[0] = 0;
+            indices[1] = 1;
+            indices[2] = 2;
+            indices[3] = 1;
+            indices[4] = 3;
+            indices[5] = 2;
+
+            this._blendModeDirty = true;
+        }
+    },
+
+    _updateMesh () {
+        const scale = this._armature._armatureData.scale;
+        const meshData = this._meshData;
+        const hasDeform = this._deformVertices.length > 0 && meshData.inheritDeform;
+        const weight = meshData.weight;
+
+        let localVertices = this._localVertices;
+        if (weight !== null) {
+            const data = meshData.parent.parent.parent;
+            const intArray = data.intArray;
+            const floatArray = data.floatArray;
+            const vertexCount = intArray[meshData.offset + BinaryOffset.MeshVertexCount];
+            let weightFloatOffset = intArray[weight.offset + BinaryOffset.WeigthFloatOffset];
+
+            if (weightFloatOffset < 0) {
+                weightFloatOffset += 65536; // Fixed out of bouds bug. 
+            }
+
+            for (
+                let i = 0, iB = weight.offset + BinaryOffset.WeigthBoneIndices + weight.bones.length, iV = weightFloatOffset, iF = 0;
+                i < vertexCount;
+                ++i
+            ) {
+                const boneCount = intArray[iB++];
+                let xG = 0.0, yG = 0.0;
+
+                for (let j = 0; j < boneCount; ++j) {
+                    const boneIndex = intArray[iB++];
+                    const bone = this._meshBones[boneIndex];
+
+                    if (bone !== null) {
+                        const matrix = bone.globalTransformMatrix;
+                        const weight = floatArray[iV++];
+                        let xL = floatArray[iV++] * scale;
+                        let yL = floatArray[iV++] * scale;
+
+                        if (hasDeform) {
+                            xL += this._deformVertices[iF++];
+                            yL += this._deformVertices[iF++];
+                        }
+
+                        xG += (matrix.a * xL + matrix.c * yL + matrix.tx) * weight;
+                        yG += (matrix.b * xL + matrix.d * yL + matrix.ty) * weight;
+                    }
                 }
 
-                var texture = this._armature._replacedTexture || (currentTextureData.texture ? currentTextureData.texture.getTexture() : null);
-                if (this._meshData && this._display === this._meshDisplay) {
-                    var region = currentTextureData.region;
-                    var textureAtlasSize = currentTextureData.texture.getTexture().getContentSize();
-                    var displayVertices = [], vertexIndices = [];
-                    var boundsRect = cc.rect(999999, 999999, -999999, -999999);
+                localVertices[i].x = xG;
+                localVertices[i].y = -yG;
+            }
+        }
+        else if (hasDeform) {
+            const isSurface = this._parent._boneData.type !== BoneType.Bone;
+            // const isGlue = meshData.glue !== null; TODO
+            const data = meshData.parent.parent.parent;
+            const intArray = data.intArray;
+            const floatArray = data.floatArray;
+            const vertexCount = intArray[meshData.offset + BinaryOffset.MeshVertexCount];
+            let vertexOffset = intArray[meshData.offset + BinaryOffset.MeshFloatOffset];
 
-                    if (this._meshData !== rawDisplayData.mesh && rawDisplayData && rawDisplayData !== currentDisplayData)
-                    {
-                        this._pivotX = rawDisplayData.transform.x - currentDisplayData.transform.x;
-                        this._pivotY = rawDisplayData.transform.y - currentDisplayData.transform.y;
-                    }
-                    else
-                    {
-                        this._pivotX = 0;
-                        this._pivotY = 0;
-                    }
+            if (vertexOffset < 0) {
+                vertexOffset += 65536; // Fixed out of bouds bug. 
+            }
 
-                    var i, n;
-                    for (i = 0, n = this._meshData.uvs.length; i < n; i +=2) {
-                        var x = this._meshData.vertices[i];
-                        var y = this._meshData.vertices[i + 1];
-                        var u = (region.x + this._meshData.uvs[i] * region.width) / textureAtlasSize.width;
-                        var v = (region.y + this._meshData.uvs[i + 1] * region.height) / textureAtlasSize.height;
-                        displayVertices.push({ x: x, y: -y, u: u, v: v });
+            for (let i = 0, l = vertexCount; i < l; i ++) {
+                const x = floatArray[vertexOffset + i*2] * scale + this._deformVertices[i*2];
+                const y = floatArray[vertexOffset + i*2 + 1] * scale + this._deformVertices[i*2 + 1];
 
-                        if (boundsRect.x > x)
-                        {
-                            boundsRect.x = x;
-                        }
-
-                        if (boundsRect.width < x)
-                        {
-                            boundsRect.width = x;
-                        }
-
-                        if (boundsRect.y > -y)
-                        {
-                            boundsRect.y = -y;
-                        }
-
-                        if (boundsRect.height < -y)
-                        {
-                            boundsRect.height = -y;
-                        }
-                    }
-
-                    boundsRect.width -= boundsRect.x;
-                    boundsRect.height -= boundsRect.y;
-
-                    for (i = 0, n = this._meshData.vertexIndices.length; i < n; ++i)
-                    {
-                        vertexIndices.push(this._meshData.vertexIndices[i]);
-                    }
-                    var polygonInfo = {
-                        triangles: {
-                            verts: displayVertices,
-                            indices: vertexIndices
-                        },
-                        rect: boundsRect
-                    };
-                    this._meshDisplay.setSpriteFrame(currentTextureData.texture);
-                    if (texture != currentTextureData.texture.getTexture())
-                    {
-                        this._meshDisplay.setTexture(texture);
-                    }
-                    this._meshDisplay.setMeshPolygonInfo(polygonInfo);
-                    this._meshDisplay.setContentSize(cc.size(boundsRect.width, boundsRect.height));
-
-                    if (this._meshData.skinned) {
-                        this._meshDisplay.setScale(1, 1);
-                        this._meshDisplay.setRotationX(0);
-                        this._meshDisplay.setRotationY(0);
-                        this._meshDisplay.setPosition(0, 0);
-                    }
-                    this._meshDisplay.setAnchorPoint(cc.p(0, 0));
+                if (isSurface) {
+                    const matrix = this._parent._getGlobalTransformMatrix(x, y);
+                    localVertices[i].x = matrix.a * x + matrix.c * y + matrix.tx;
+                    localVertices[i].y = -matrix.b * x + matrix.d * y + matrix.ty;
                 }
                 else {
-                    var scale = this._armature.armatureData.scale;
-                    this._pivotX = currentDisplayData.pivot.x;
-                    this._pivotY = currentDisplayData.pivot.y;
-
-                    if (currentDisplayData.isRelativePivot) {
-                        var rectData = currentTextureData.frame || currentTextureData.region;
-                        var width = rectData.width * scale;
-                        var height = rectData.height * scale;
-                        if (!currentTextureData.frame && currentTextureData.rotated) {
-                            width = rectData.height;
-                            height = rectData.width;
-                        }
-
-                        this._pivotX *= width;
-                        this._pivotY *= height;
-                    }
-
-                    if (currentTextureData.frame) {
-                        this._pivotX += currentTextureData.frame.x * scale;
-                        this._pivotY += currentTextureData.frame.y * scale;
-                    }
-
-                    if (rawDisplayData && rawDisplayData !== currentDisplayData) {
-                        this._pivotX += rawDisplayData.transform.x - currentDisplayData.transform.x;
-                        this._pivotY += rawDisplayData.transform.y - currentDisplayData.transform.y;
-                    }
-                    this._pivotY -= currentTextureData.region.height * scale;
-
-                    this._rawDisplay.setSpriteFrame(currentTextureData.texture);
-                    this._rawDisplay.setContentSize(currentTextureData.texture.getOriginalSize());
-                    if (texture !== currentTextureData.texture.getTexture()) {
-                        this._rawDisplay.setTexture(texture);
-                    }
-                    this._blendModeDirty = true;
+                    localVertices[i].x = x;
+                    localVertices[i].y = -y;
                 }
-
-                this._updateVisible();
-                return;
             }
         }
 
-        this._pivotX = 0;
-        this._pivotY = 0;
-        this._rawDisplay.setTexture(null);
-        this._rawDisplay.setVisible(false);
-        this._rawDisplay.setPosition(this.origin.x, this.origin.y);
     },
 
-    _updateMesh : function() {
-        var meshDisplay = this._meshDisplay;
-        var polygonInfo = meshDisplay.getMeshPolygonInfo();
-        if (!meshDisplay || !polygonInfo)
-        {
-            return;
-        }
+    _updateTransform () {
+        let t = this._matrix;
+        t.m00 = this.globalTransformMatrix.a;
+        t.m01 = -this.globalTransformMatrix.b;
+        t.m04 = -this.globalTransformMatrix.c;
+        t.m05 = this.globalTransformMatrix.d;
+        t.m12 = this.globalTransformMatrix.tx - (this.globalTransformMatrix.a * this._pivotX + this.globalTransformMatrix.c * this._pivotY);
+        t.m13 = -(this.globalTransformMatrix.ty - (this.globalTransformMatrix.b * this._pivotX + this.globalTransformMatrix.d * this._pivotY));
 
-        var hasFFD = this._ffdVertices.length > 0;
-        var displayVertices = polygonInfo.triangles.verts;
-        var boundsRect = cc.rect(999999, 999999, -999999, -999999);
-
-        var iH = 0, xG = 0, yG = 0, i, l;
-        if (this._meshData.skinned)
-        {
-            var iF = 0;
-            for (i = 0, l = this._meshData.vertices.length; i < l; i += 2)
-            {
-                iH = Math.floor(i / 2);
-                var boneIndices = this._meshData.boneIndices[iH];
-                var boneVertices = this._meshData.boneVertices[iH];
-                var weights = this._meshData.weights[iH];
-
-                xG = 0; yG = 0;
-                for (var iB = 0, lB = boneIndices.length; iB < lB; ++iB)
-                {
-                    var bone = this._meshBones[boneIndices[iB]];
-                    var matrix = bone.globalTransformMatrix;
-                    var weight = weights[iB];
-
-                    var xL = 0, yL = 0;
-                    if (hasFFD)
-                    {
-                        xL = boneVertices[iB * 2] + this._ffdVertices[iF];
-                        yL = boneVertices[iB * 2 + 1] + this._ffdVertices[iF + 1];
-                    }
-                    else
-                    {
-                        xL = boneVertices[iB * 2];
-                        yL = boneVertices[iB * 2 + 1];
-                    }
-
-                    xG += (matrix.a * xL + matrix.c * yL + matrix.tx) * weight;
-                    yG += (matrix.b * xL + matrix.d * yL + matrix.ty) * weight;
-
-                    iF += 2;
-                }
-
-                displayVertices[iH].x = xG;
-                displayVertices[iH].y = -yG;
-                if (boundsRect.x > xG)
-                {
-                    boundsRect.x = xG;
-                }
-
-                if (boundsRect.width < xG)
-                {
-                    boundsRect.width = xG;
-                }
-
-                if (boundsRect.y > -yG)
-                {
-                    boundsRect.y = -yG;
-                }
-
-                if (boundsRect.height < -yG)
-                {
-                    boundsRect.height = -yG;
-                }
-            }
-        }
-        else if (hasFFD)
-        {
-            var vertices = this._meshData.vertices;
-            for (i = 0, l = this._meshData.vertices.length; i < l; i += 2)
-            {
-                iH = Math.floor(i / 2);
-                xG = vertices[i] + this._ffdVertices[i];
-                yG = vertices[i + 1] + this._ffdVertices[i + 1];
-
-                displayVertices[iH].x = xG;
-                displayVertices[iH].y = -yG;
-                if (boundsRect.x > xG)
-                {
-                    boundsRect.x = xG;
-                }
-
-                if (boundsRect.width < xG)
-                {
-                    boundsRect.width = xG;
-                }
-
-                if (boundsRect.y > -yG)
-                {
-                    boundsRect.y = -yG;
-                }
-
-                if (boundsRect.height < -yG)
-                {
-                    boundsRect.height = -yG;
-                }
-            }
-        }
-
-        boundsRect.width -= boundsRect.x;
-        boundsRect.height -= boundsRect.y;
-
-        polygonInfo.rect = boundsRect;
-        var transform = meshDisplay.getNodeToParentTransform();
-        meshDisplay.setContentSize(cc.size(boundsRect.width, boundsRect.height));
-        meshDisplay.setMeshPolygonInfo(polygonInfo);
-        this._renderDisplay._renderCmd.setNodeToParentTransform(transform);
+        this._worldMatrixDirty = true;
     },
 
-    _updateTransform : function () {
-        // update the transform
-        var transform = {
-            a: this.globalTransformMatrix.a,
-            b: -this.globalTransformMatrix.b,
-            c: -this.globalTransformMatrix.c,
-            d: this.globalTransformMatrix.d,
-            tx: this.globalTransformMatrix.tx - (this.globalTransformMatrix.a * this._pivotX + this.globalTransformMatrix.c * this._pivotY),
-            ty: -(this.globalTransformMatrix.ty - (this.globalTransformMatrix.b * this._pivotX + this.globalTransformMatrix.d * this._pivotY))
-        };
-        this._renderDisplay._renderCmd.setNodeToParentTransform(transform);
+    updateWorldMatrix () {
+        if (!this._armature) return;
+
+        var parentSlot = this._armature._parent;
+        if (parentSlot) {
+            parentSlot.updateWorldMatrix();
+        }
+
+        if (this._worldMatrixDirty) {
+            this.calculWorldMatrix();
+            var childArmature = this.childArmature;
+            if (!childArmature) return;
+            var slots = childArmature.getSlots();
+            for (var i = 0,n = slots.length; i < n; i++) {
+                var slot = slots[i];
+                if (slot) {
+                    slot._worldMatrixDirty = true;
+                }
+            }
+        }
+    },
+
+    _mulMat (out, a, b) {
+        let aa=a.m00, ab=a.m01, ac=a.m04, ad=a.m05, atx=a.m12, aty=a.m13;
+        let ba=b.m00, bb=b.m01, bc=b.m04, bd=b.m05, btx=b.m12, bty=b.m13;
+        if (ab !== 0 || ac !== 0) {
+            out.m00 = ba * aa + bb * ac;
+            out.m01 = ba * ab + bb * ad;
+            out.m04 = bc * aa + bd * ac;
+            out.m05 = bc * ab + bd * ad;
+            out.m12 = aa * btx + ac * bty + atx;
+            out.m13 = ab * btx + ad * bty + aty;
+        }
+        else {
+            out.m00 = ba * aa;
+            out.m01 = bb * ad;
+            out.m04 = bc * aa;
+            out.m05 = bd * ad;
+            out.m12 = aa * btx + atx;
+            out.m13 = ad * bty + aty;
+        }
+    },
+
+    calculWorldMatrix () {
+        var parent = this._armature._parent;
+        if (parent) {
+            this._mulMat(this._worldMatrix ,parent._worldMatrix, this._matrix);
+        } else {
+            mat4.copy(this._worldMatrix, this._matrix);
+        }
+        this._worldMatrixDirty = false;
     }
 });
